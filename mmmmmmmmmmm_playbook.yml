@@ -1,0 +1,6 @@
+- name: "D\xE9ploiement mmmmmmmmmmm"
+  hosts: localhost
+  tasks:
+  - name: "Exemple t\xE2che"
+    debug:
+      msg: "D\xE9ploiement mmmmmmmmmmm"
