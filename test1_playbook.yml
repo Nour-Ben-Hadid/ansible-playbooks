@@ -1,0 +1,6 @@
+- name: Deploiement test1
+  hosts: localhost
+  tasks:
+  - name: Exemple tache
+    debug:
+      msg: Deploiement test1
