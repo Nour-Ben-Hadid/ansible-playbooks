@@ -1,6 +1,0 @@
-- name: Deploiement oo
-  hosts: localhost
-  tasks:
-  - name: Exemple tache
-    debug:
-      msg: Deploiement oo
