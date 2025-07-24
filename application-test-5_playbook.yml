@@ -2,10 +2,6 @@
   hosts: localhost
   gather_facts: false
   vars:
-    azure_subscription_id: '{{ azure_rm.subscription }}'
-    azure_client_id: '{{ azure_rm.client }}'
-    azure_client_secret: '{{ azure_rm.secret }}'
-    azure_tenant_id: '{{ azure_rm.tenant }}'
     resource_group: grp-testing-5
     app_name: application-test-5
     location: East US
@@ -14,13 +10,13 @@
   tasks:
   - name: Get Azure access token
     ansible.builtin.uri:
-      url: https://login.microsoftonline.com/{{ azure_tenant_id }}/oauth2/v2.0/token
+      url: https://login.microsoftonline.com/{{ azure_tenant }}/oauth2/v2.0/token
       method: POST
       body_format: form-urlencoded
       body:
         grant_type: client_credentials
         client_id: '{{ azure_client_id }}'
-        client_secret: '{{ azure_client_secret }}'
+        client_secret: '{{ azure_secret }}'
         scope: https://management.azure.com/.default
     register: auth_response
   - name: Set access token fact
