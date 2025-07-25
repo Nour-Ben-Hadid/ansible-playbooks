@@ -1,9 +1,9 @@
-- name: Deploy final-test-2-0725-0143 to Azure
+- name: Deploy final-test-2-0725-0152 to Azure
   hosts: localhost
   gather_facts: false
   vars:
     resource_group: final-test-grp-2
-    app_name: final-test-2-0725-0143
+    app_name: final-test-2-0725-0152
     original_app_name: final-test-2
     location: East US
     app_repo_url: https://github.com/djeada/NodeJs-Minimal
