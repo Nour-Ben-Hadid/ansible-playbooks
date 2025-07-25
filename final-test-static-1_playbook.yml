@@ -1,0 +1,84 @@
+- name: Deploy final-test-static-1-0725-1921 Static Web App to Azure
+  hosts: localhost
+  gather_facts: false
+  vars:
+    resource_group: final-grp-static-1
+    app_name: final-test-static-1-0725-1921
+    original_app_name: final-test-static-1
+    location: westeurope
+    app_repo_url: https://github.com/djeada/NodeJs-Minimal
+    app_repo_branch: main
+  tasks:
+  - name: Get Azure access token
+    ansible.builtin.uri:
+      url: https://login.microsoftonline.com/{{ azure_tenant }}/oauth2/v2.0/token
+      method: POST
+      body_format: form-urlencoded
+      body:
+        grant_type: client_credentials
+        client_id: '{{ azure_client_id }}'
+        client_secret: '{{ azure_secret }}'
+        scope: https://management.azure.com/.default
+    register: auth_response
+  - name: Set access token fact
+    ansible.builtin.set_fact:
+      access_token: '{{ auth_response.json.access_token }}'
+  - name: Create or update Resource Group
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourcegroups/{{
+        resource_group }}?api-version=2021-04-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        location: '{{ location }}'
+        tags:
+          Environment: Production
+          CreatedBy: Ansible-Playbook
+          AppType: StaticWebApp
+      status_code:
+      - 200
+      - 201
+    register: rg_response
+  - name: Create Static Web App
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/staticSites/{{ app_name }}?api-version=2022-03-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        location: '{{ location }}'
+        sku:
+          name: Free
+          tier: Free
+        properties:
+          repositoryUrl: '{{ app_repo_url }}'
+          branch: '{{ app_repo_branch }}'
+          buildProperties:
+            appLocation: /
+            apiLocation: ''
+            outputLocation: dist
+      status_code:
+      - 200
+      - 201
+      - 202
+    register: swa_response
+  - name: Display Static Web App information
+    ansible.builtin.debug:
+      msg:
+      - Static Web App deployment completed successfully!
+      - 'App Name: {{ app_name }}'
+      - 'Resource Group: {{ resource_group }}'
+      - 'Location: {{ location }}'
+      - 'Repository: {{ app_repo_url }}'
+      - 'Branch: {{ app_repo_branch }}'
+      - 'App Location: /'
+      - 'Output Location: dist'
+      - 'Note: The app URL will be available after the first successful GitHub Actions
+        deployment'
+      - Check GitHub Actions in your repository for deployment status
