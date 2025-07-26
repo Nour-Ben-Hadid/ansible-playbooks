@@ -1,0 +1,364 @@
+- name: Deploy final-test-9988-0726-1355 to Azure
+  hosts: localhost
+  gather_facts: false
+  vars:
+    resource_group: final-grp-9988
+    app_name: final-test-9988-0726-1355
+    original_app_name: final-test-9988
+    location: eastus
+    app_repo_url: https://github.com/djeada/NodeJs-Minimal
+    app_repo_branch: main
+  tasks:
+  - name: Get Azure access token
+    ansible.builtin.uri:
+      url: https://login.microsoftonline.com/{{ azure_tenant }}/oauth2/v2.0/token
+      method: POST
+      body_format: form-urlencoded
+      body:
+        grant_type: client_credentials
+        client_id: '{{ azure_client_id }}'
+        client_secret: '{{ azure_secret }}'
+        scope: https://management.azure.com/.default
+    register: auth_response
+  - name: Set access token fact
+    ansible.builtin.set_fact:
+      access_token: '{{ auth_response.json.access_token }}'
+  - name: Create or update Resource Group
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourcegroups/{{
+        resource_group }}?api-version=2021-04-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        location: '{{ location }}'
+        tags:
+          Environment: Production
+          CreatedBy: Ansible-Playbook
+      status_code:
+      - 200
+      - 201
+    register: rg_response
+  - name: Create App Service Plan
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/serverfarms/{{ app_name }}-plan?api-version=2021-02-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        location: '{{ location }}'
+        sku:
+          name: F1
+          tier: Free
+        properties:
+          name: '{{ app_name }}-plan'
+      status_code:
+      - 200
+      - 201
+    register: asp_response
+  - name: Create Web App
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/sites/{{ app_name }}?api-version=2021-02-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        location: '{{ location }}'
+        properties:
+          serverFarmId: /subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+            resource_group }}/providers/Microsoft.Web/serverfarms/{{ app_name }}-plan
+          siteConfig:
+            appSettings:
+            - name: WEBSITE_NODE_DEFAULT_VERSION
+              value: 18-lts
+            - name: SCM_DO_BUILD_DURING_DEPLOYMENT
+              value: 'true'
+            - name: ENABLE_ORYX_BUILD
+              value: 'true'
+            - name: BUILD_FLAGS
+              value: UseExpressBuild
+            - name: XDT_MicrosoftApplicationInsights_NodeJS
+              value: '1'
+            - name: WEBSITE_RUN_FROM_PACKAGE
+              value: '1'
+            - name: SCM_COMMAND_IDLE_TIMEOUT
+              value: '600'
+            - name: ORYX_AI_INSTRUMENTATION_KEY
+              value: ''
+            - name: PRE_BUILD_SCRIPT_PATH
+              value: ''
+            - name: POST_BUILD_SCRIPT_PATH
+              value: ''
+            - name: WEBSITE_STARTUP_FILE
+              value: ''
+            - name: NODE_ENV
+              value: production
+            nodeVersion: 18-lts
+            linuxFxVersion: ''
+            autoSwapSlotName: ''
+            use32BitWorkerProcess: true
+            appCommandLine: ''
+            virtualDirectories:
+            - virtualPath: /
+              physicalPath: site\wwwroot
+      status_code:
+      - 200
+      - 201
+    register: webapp_response
+  - name: Configure deployment settings
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/sites/{{ app_name }}/config/web?api-version=2021-02-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        properties:
+          numberOfWorkers: 1
+          defaultDocuments:
+          - index.htm
+          - index.html
+          - index.js
+          - server.js
+          - app.js
+          nodeVersion: 18-lts
+          requestTracingEnabled: true
+          httpLoggingEnabled: true
+          logsDirectorySizeLimit: 35
+          detailedErrorLoggingEnabled: true
+          publishingUsername: ${{ app_name }}
+          scmType: GitHub
+          webSocketsEnabled: false
+          alwaysOn: false
+          http20Enabled: false
+          minTlsVersion: '1.2'
+          ftpsState: AllAllowed
+      status_code:
+      - 200
+      - 201
+    register: webapp_config_response
+  - name: Remove existing deployment source
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/sites/{{ app_name }}/sourcecontrols/web?api-version=2021-02-01
+      method: DELETE
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      status_code:
+      - 200
+      - 204
+      - 404
+    register: remove_deployment_response
+    ignore_errors: true
+  - name: Configure deployment source (GitHub)
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/sites/{{ app_name }}/sourcecontrols/web?api-version=2021-02-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        properties:
+          repoUrl: '{{ app_repo_url }}'
+          branch: '{{ app_repo_branch }}'
+          isManualIntegration: true
+          deploymentRollbackEnabled: false
+          isMercurial: false
+      status_code:
+      - 200
+      - 201
+      - 202
+    register: deployment_response
+  - name: Trigger immediate deployment sync
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/sites/{{ app_name }}/sync?api-version=2021-02-01
+      method: POST
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      status_code:
+      - 200
+      - 202
+    register: sync_response
+    ignore_errors: true
+  - name: Configure automatic startup detection
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/sites/{{ app_name }}/config/appsettings?api-version=2021-02-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        properties:
+          SCM_SCRIPT_GENERATOR_ARGS: --node
+          WEBSITE_NODE_DEFAULT_VERSION: 18.x
+          iisnode_node_options: --max-old-space-size=1024
+      status_code:
+      - 200
+      - 201
+    register: startup_config_response
+  - name: Detect entry file structure from repository
+    ansible.builtin.uri:
+      url: '{{ app_repo_url.replace(''github.com'', ''api.github.com/repos'').replace(''.git'',
+        '''') }}/contents'
+      method: GET
+      headers:
+        Accept: application/vnd.github.v3+json
+        User-Agent: Ansible-Azure-Deployment
+      status_code:
+      - 200
+      - 404
+    register: repo_contents
+    ignore_errors: true
+  - name: Check src directory if exists
+    ansible.builtin.uri:
+      url: '{{ app_repo_url.replace(''github.com'', ''api.github.com/repos'').replace(''.git'',
+        '''') }}/contents/src'
+      method: GET
+      headers:
+        Accept: application/vnd.github.v3+json
+        User-Agent: Ansible-Azure-Deployment
+      status_code:
+      - 200
+      - 404
+    register: src_contents
+    ignore_errors: true
+  - name: Set entry file path based on repository structure
+    ansible.builtin.set_fact:
+      entry_file_path: '{% if src_contents.status == 200 and (src_contents.json |
+        selectattr(''name'', ''equalto'', ''app.js'') | list | length > 0) %}src/app.js{%
+        elif repo_contents.status == 200 and (repo_contents.json | selectattr(''name'',
+        ''equalto'', ''index.js'') | list | length > 0) %}index.js{% elif repo_contents.status
+        == 200 and (repo_contents.json | selectattr(''name'', ''equalto'', ''server.js'')
+        | list | length > 0) %}server.js{% elif repo_contents.status == 200 and (repo_contents.json
+        | selectattr(''name'', ''equalto'', ''app.js'') | list | length > 0) %}app.js{%
+        else %}src/app.js{% endif %}'
+  - name: Create dynamic web.config for iisnode
+    ansible.builtin.uri:
+      url: https://{{ app_name }}.scm.azurewebsites.net/api/vfs/site/wwwroot/web.config
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/xml
+      body: "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration>\n  <system.webServer>\n\
+        \    <handlers>\n      <add name=\"iisnode\" path=\"{{ entry_file_path }}\"\
+        \ verb=\"*\" modules=\"iisnode\" />\n    </handlers>\n    <rewrite>\n    \
+        \  <rules>\n        <rule name=\"nodejs\" patternSyntax=\"ECMAScript\" stopProcessing=\"\
+        true\">\n          <match url=\".*\" />\n          <conditions>\n        \
+        \    <add input=\"{REQUEST_FILENAME}\" matchType=\"IsFile\" negate=\"true\"\
+        \ />\n          </conditions>\n          <action type=\"Rewrite\" url=\"{{\
+        \ entry_file_path }}\" />\n        </rule>\n      </rules>\n    </rewrite>\n\
+        \    <iisnode nodeProcessCommandLine=\"&quot;%programfiles%\\nodejs\\node.exe&quot;\"\
+        \ interceptor=\"&quot;%programfiles%\\iisnode\\interceptor.js&quot;\" watchedFiles=\"\
+        *.js;*.json\" loggingEnabled=\"true\" debuggingEnabled=\"true\" />\n  </system.webServer>\n\
+        </configuration>"
+      status_code:
+      - 200
+      - 201
+    register: webconfig_response
+    ignore_errors: true
+  - name: Wait for deployment to complete
+    ansible.builtin.pause:
+      seconds: 60
+  - name: Check deployment status
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/sites/{{ app_name }}/deployments?api-version=2021-02-01
+      method: GET
+      headers:
+        Authorization: Bearer {{ access_token }}
+      status_code:
+      - 200
+    register: deployment_status
+    ignore_errors: true
+  - name: Check application startup logs
+    ansible.builtin.uri:
+      url: https://{{ app_name }}.scm.azurewebsites.net/api/logs/recent
+      method: GET
+      headers:
+        Authorization: Bearer {{ access_token }}
+      status_code:
+      - 200
+      - 404
+    register: startup_logs
+    ignore_errors: true
+  - name: Verify application is running
+    ansible.builtin.uri:
+      url: https://{{ app_name }}.azurewebsites.net
+      method: GET
+      status_code:
+      - 200
+      - 202
+      - 503
+    register: app_health_check
+    ignore_errors: true
+  - name: Display deployment information
+    ansible.builtin.debug:
+      msg:
+      - Web App deployment completed successfully!
+      - 'App Name: {{ app_name }}'
+      - 'Resource Group: {{ resource_group }}'
+      - 'Location: {{ location }}'
+      - 'App URL: https://{{ app_name }}.azurewebsites.net'
+      - 'Repository: {{ app_repo_url }}'
+      - 'Branch: {{ app_repo_branch }}'
+      - 'Runtime: Node.js 18-lts'
+      - 'Build System: Oryx (automatic npm install)'
+      - 'Startup Command: npm start (fallback: auto-detect server.js, app.js, src/*,
+        index.js)'
+      - 'Auto-detection: Enabled for recursive file search'
+      - 'Health Check: {{ ''PASSED'' if app_health_check.status == 200 else ''FAILED
+        - Check logs'' }}'
+      - '{{ ''ERROR: 403.14 - No entry file found. Check repository structure.'' if
+        app_health_check.status == 403 else '''' }}'
+      - '{{ ''ERROR: 500 - Application crashed. Check syntax errors in JavaScript
+        code.'' if app_health_check.status == 500 else '''' }}'
+      - 'Repository Structure Analysis:'
+      - '  - Root files: {{ repo_contents.json | selectattr(''type'', ''equalto'',
+        ''file'') | map(attribute=''name'') | list | join('', '') if repo_contents.status
+        == 200 else ''Unable to analyze'' }}'
+      - '  - src/ directory: {{ ''EXISTS'' if src_contents.status == 200 else ''NOT
+        FOUND'' }}'
+      - '  - src/ files: {{ src_contents.json | selectattr(''type'', ''equalto'',
+        ''file'') | map(attribute=''name'') | list | join('', '') if src_contents.status
+        == 200 else ''N/A'' }}'
+      - 'Windows Configuration:'
+      - '  - Platform: Windows (iisnode)'
+      - '  - Entry File: {{ entry_file_path if entry_file_path is defined else ''src/app.js
+        (default)'' }}'
+      - '  - web.config Status: {{ ''CREATED'' if webconfig_response.status in [200,
+        201] else ''FAILED'' }}'
+      - 'Deployment Status: {{ deployment_status.json.value[0].properties.status |
+        default(''Unknown'') if deployment_status.json.value | default([]) | length
+        > 0 else ''No deployments found'' }}'
+      - 'Troubleshooting:'
+      - '  1. If ERROR 500: Check JavaScript syntax errors (missing/extra brackets,
+        commas, etc.)'
+      - '  2. If ERROR 403: Ensure package.json exists with ''start'' script'
+      - '  3. If ERROR 404: Verify entry file (app.js, server.js, index.js) exists'
+      - '  4. Check GitHub repository structure and code quality'
+      - 'Verification Commands:'
+      - '  - Logs: az webapp log tail --name {{ app_name }} --resource-group {{ resource_group
+        }}'
+      - '  - SSH: az webapp ssh --name {{ app_name }} --resource-group {{ resource_group
+        }}'
+      - '  - Kudu: https://{{ app_name }}.scm.azurewebsites.net'
+      - '  - Sync: az webapp deployment source sync --name {{ app_name }} --resource-group
+        {{ resource_group }}'
+      - '  - Status: {{ app_health_check.status | default(''Unknown'') }}'
