@@ -1,0 +1,226 @@
+- name: Deploy dimanche-app-8-0727-1830 to Azure Linux App Service
+  hosts: localhost
+  gather_facts: false
+  vars:
+    resource_group: dimanche-grp-8
+    app_name: dimanche-app-8-0727-1830
+    original_app_name: dimanche-app-8
+    location: francecentral
+    app_repo_url: https://github.com/Nour-Ben-Hadid/nodejs-docs-hello-world.git
+    app_repo_branch: main
+    startup_file: ''
+    startup_command: npm start
+  tasks:
+  - name: Get Azure access token
+    ansible.builtin.uri:
+      url: https://login.microsoftonline.com/{{ azure_tenant }}/oauth2/v2.0/token
+      method: POST
+      body_format: form-urlencoded
+      body:
+        grant_type: client_credentials
+        client_id: '{{ azure_client_id }}'
+        client_secret: '{{ azure_secret }}'
+        scope: https://management.azure.com/.default
+    register: auth_response
+  - name: Set access token fact
+    ansible.builtin.set_fact:
+      access_token: '{{ auth_response.json.access_token }}'
+  - name: Create or update Resource Group
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourcegroups/{{
+        resource_group }}?api-version=2021-04-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        location: '{{ location }}'
+        tags:
+          Environment: Production
+          CreatedBy: Ansible-Playbook
+          Platform: Linux
+      status_code:
+      - 200
+      - 201
+    register: rg_response
+  - name: Create Linux App Service Plan
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/serverfarms/{{ app_name }}-plan?api-version=2021-02-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        location: '{{ location }}'
+        kind: linux
+        properties:
+          name: '{{ app_name }}-plan'
+          reserved: true
+        sku:
+          name: F1
+          tier: Free
+      status_code:
+      - 200
+      - 201
+    register: asp_response
+  - name: Create Linux Web App
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/sites/{{ app_name }}?api-version=2021-02-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        location: '{{ location }}'
+        kind: app,linux
+        properties:
+          serverFarmId: /subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+            resource_group }}/providers/Microsoft.Web/serverfarms/{{ app_name }}-plan
+          reserved: true
+          siteConfig:
+            linuxFxVersion: NODE|18-lts
+            appCommandLine: '{{ startup_command }}'
+            appSettings:
+            - name: WEBSITES_ENABLE_APP_SERVICE_STORAGE
+              value: 'false'
+            - name: SCM_DO_BUILD_DURING_DEPLOYMENT
+              value: 'true'
+            - name: ENABLE_ORYX_BUILD
+              value: 'true'
+            - name: NODE_ENV
+              value: production
+            alwaysOn: false
+            ftpsState: Disabled
+            minTlsVersion: '1.2'
+            http20Enabled: true
+      status_code:
+      - 200
+      - 201
+    register: webapp_response
+  - name: Configure advanced Linux settings
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/sites/{{ app_name }}/config/web?api-version=2021-02-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        properties:
+          numberOfWorkers: 1
+          linuxFxVersion: NODE|18-lts
+          appCommandLine: '{{ startup_command }}'
+          requestTracingEnabled: true
+          httpLoggingEnabled: true
+          logsDirectorySizeLimit: 35
+          detailedErrorLoggingEnabled: true
+          scmType: GitHub
+          alwaysOn: false
+          http20Enabled: true
+          minTlsVersion: '1.2'
+          ftpsState: Disabled
+          localMySqlEnabled: false
+          managedPipelineMode: Integrated
+          remoteDebuggingEnabled: false
+          use32BitWorkerProcess: true
+      status_code:
+      - 200
+      - 201
+    register: webapp_config_response
+  - name: Verify Linux configuration
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/sites/{{ app_name }}/config/web?api-version=2021-02-01
+      method: GET
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      status_code:
+      - 200
+    register: webapp_config_check
+  - name: Display Linux configuration status
+    ansible.builtin.debug:
+      msg:
+      - === LINUX WEB APP CONFIGURATION VERIFICATION ===
+      - 'Platform: Linux Container'
+      - 'Runtime Stack: {{ webapp_config_check.json.properties.linuxFxVersion | default(''Not
+        specified'') }}'
+      - 'Startup Command: {{ webapp_config_check.json.properties.appCommandLine |
+        default(''Default npm start'') }}'
+      - 'Reserved (Linux): {{ webapp_config_check.json.properties.reserved | default(false)
+        }}'
+      - '64-bit Platform: {{ not webapp_config_check.json.properties.use32BitWorkerProcess
+        | default(false) }}'
+      - "Status: \u2705 Linux App Service successfully configured"
+  - name: Remove existing deployment source
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/sites/{{ app_name }}/sourcecontrols/web?api-version=2021-02-01
+      method: DELETE
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      status_code:
+      - 200
+      - 204
+      - 404
+    register: remove_deployment_response
+    ignore_errors: true
+  - name: Configure deployment source (GitHub)
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/sites/{{ app_name }}/sourcecontrols/web?api-version=2021-02-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        properties:
+          repoUrl: '{{ app_repo_url }}'
+          branch: '{{ app_repo_branch }}'
+          isManualIntegration: true
+          deploymentRollbackEnabled: false
+          isMercurial: false
+      status_code:
+      - 200
+      - 201
+      - 202
+    register: deployment_response
+  - name: Display deployment information
+    ansible.builtin.debug:
+      msg:
+      - === LINUX WEB APP DEPLOYMENT COMPLETED SUCCESSFULLY! ===
+      - 'App Name: {{ app_name }}'
+      - 'Resource Group: {{ resource_group }}'
+      - 'Location: {{ location }}'
+      - 'App URL: https://{{ app_name }}.azurewebsites.net'
+      - 'Repository: {{ app_repo_url }}'
+      - 'Branch: {{ app_repo_branch }}'
+      - '--- Linux Configuration ---'
+      - 'Platform: Linux Container (Ubuntu)'
+      - 'Runtime: Node.js 18 LTS on Linux'
+      - 'Build System: Oryx (automatic npm install)'
+      - 'Architecture: 32-bit (Free tier limitation)'
+      - '{% if startup_file is defined and startup_file != ''auto-detect'' %}Startup
+        Command: node {{ startup_file }}{% else %}Startup Command: npm start (default){%
+        endif %}'
+      - 'Container: Managed Linux container with Docker'
+      - 'Security: FTPS disabled, TLS 1.2 minimum'
+      - === LINUX ADVANTAGES ===
+      - "\u2705 Better performance for Node.js applications"
+      - "\u2705 Native Linux environment"
+      - "\u2705 Docker-based containerization"
+      - "\u2705 More cost-effective resource usage"
+      - "\u2705 Better compatibility with modern Node.js features"
+      - === NEXT STEPS ===
+      - 1. Check deployment status in Azure Portal
+      - '2. Monitor application logs: az webapp log tail --name {{ app_name }} --resource-group
+        {{ resource_group }}'
+      - '3. Verify app is running at: https://{{ app_name }}.azurewebsites.net'
