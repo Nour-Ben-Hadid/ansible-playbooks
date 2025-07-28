@@ -1,0 +1,131 @@
+- name: Deploy dimanche-static-2-0728-0337 Static Web App to Azure
+  hosts: localhost
+  gather_facts: false
+  vars:
+    resource_group: dimanche-static-2
+    app_name: dimanche-static-2-0728-0337
+    original_app_name: dimanche-static-2
+    location: westeurope
+    app_repo_url: https://github.com/mdn/beginner-html-site.git
+    app_repo_branch: main
+  tasks:
+  - name: Get Azure access token
+    ansible.builtin.uri:
+      url: https://login.microsoftonline.com/{{ azure_tenant }}/oauth2/v2.0/token
+      method: POST
+      body_format: form-urlencoded
+      body:
+        grant_type: client_credentials
+        client_id: '{{ azure_client_id }}'
+        client_secret: '{{ azure_secret }}'
+        scope: https://management.azure.com/.default
+    register: auth_response
+  - name: Set access token fact
+    ansible.builtin.set_fact:
+      access_token: '{{ auth_response.json.access_token }}'
+  - name: Create or update Resource Group
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourcegroups/{{
+        resource_group }}?api-version=2021-04-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        location: '{{ location }}'
+        tags:
+          Environment: Production
+          CreatedBy: Ansible-Playbook
+          AppType: StaticWebApp
+          Platform: Linux
+      status_code:
+      - 200
+      - 201
+    register: rg_response
+  - name: Create Static Web App
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/staticSites/{{ app_name }}?api-version=2022-03-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        location: '{{ location }}'
+        sku:
+          name: Free
+          tier: Free
+        properties:
+          repositoryUrl: '{{ app_repo_url }}'
+          branch: '{{ app_repo_branch }}'
+          buildProperties:
+            appLocation: /
+            apiLocation: ''
+            outputLocation: /
+            skipGithubActionWorkflowGeneration: false
+          stagingEnvironmentPolicy: Enabled
+          allowConfigFileUpdates: true
+          provider: GitHub
+          enterpriseGradeCdnStatus: Disabled
+      status_code:
+      - 200
+      - 201
+      - 202
+    register: swa_response
+  - name: Wait for Static Web App provisioning
+    ansible.builtin.pause:
+      seconds: 15
+  - name: Get Static Web App details
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/staticSites/{{ app_name }}?api-version=2022-03-01
+      method: GET
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      status_code:
+      - 200
+    register: swa_details
+  - name: Display Static Web App information
+    ansible.builtin.debug:
+      msg:
+      - === STATIC WEB APP DEPLOYMENT COMPLETED SUCCESSFULLY! ===
+      - 'App Name: {{ app_name }}'
+      - 'Resource Group: {{ resource_group }}'
+      - 'Location: {{ location }}'
+      - 'Repository: {{ app_repo_url }}'
+      - 'Branch: {{ app_repo_branch }}'
+      - '--- Configuration pour application STATIQUE ---'
+      - 'App Location: / (racine du repository)'
+      - 'Output Location: / (fichiers statiques directement accessibles)'
+      - 'API Location: (vide - pas d''API backend)'
+      - 'Default Hostname: {{ swa_details.json.properties.defaultHostname | default(''En
+        cours de provisioning...'') }}'
+      - 'Platform: Linux-based GitHub Actions runners'
+      - 'Build Environment: Ubuntu Latest'
+      - === INSTRUCTIONS IMPORTANTES ===
+      - "\U0001F4C1 Structure recommand\xE9e pour votre repository:"
+      - "   \u251C\u2500\u2500 index.html (page d'accueil)"
+      - "   \u251C\u2500\u2500 style.css"
+      - "   \u251C\u2500\u2500 script.js"
+      - "   \u2514\u2500\u2500 assets/ (images, etc.)"
+      - ''
+      - "\U0001F527 Azure Static Web Apps va automatiquement:"
+      - "   - Cr\xE9er un workflow GitHub Actions"
+      - "   - D\xE9ployer vos fichiers statiques"
+      - '   - Servir index.html comme page d''accueil'
+      - ''
+      - "\u26A0\uFE0F  Si vous voyez 'Nous n'avons pas encore re\xE7u de contenu':"
+      - "   1. V\xE9rifiez que votre repository contient index.html"
+      - "   2. Attendez que GitHub Actions termine le d\xE9ploiement"
+      - '   3. Consultez l''onglet Actions de votre repository GitHub'
+      - ''
+      - === STATIC WEB APP ADVANTAGES ===
+      - "\u2705 Global CDN distribution"
+      - "\u2705 Automatic HTTPS"
+      - "\u2705 Linux-based build pipeline"
+      - "\u2705 GitHub Actions integration"
+      - "\u2705 Optimis\xE9 pour contenus statiques"
+      - "\u2705 Pas de serveur \xE0 g\xE9rer"
