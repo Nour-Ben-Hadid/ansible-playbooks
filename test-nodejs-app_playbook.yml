@@ -1,9 +1,9 @@
-- name: Deploy test-nodejs-app-0730-2343 to Azure Linux App Service
+- name: Deploy test-nodejs-app-0730-2344 to Azure Linux App Service
   hosts: localhost
   gather_facts: false
   vars:
     resource_group: rg-test-nodejs
-    app_name: test-nodejs-app-0730-2343
+    app_name: test-nodejs-app-0730-2344
     original_app_name: test-nodejs-app
     location: eastus
     app_repo_url: https://github.com/microsoft/nodejs-sample-webapp
