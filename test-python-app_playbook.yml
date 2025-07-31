@@ -1,9 +1,9 @@
-- name: Deploy test-python-app-0731-1409 Python App to Azure Linux App Service
+- name: Deploy test-python-app-0731-1435 Python App to Azure Linux App Service
   hosts: localhost
   gather_facts: false
   vars:
     resource_group: rg-test-python
-    app_name: test-python-app-0731-1409
+    app_name: test-python-app-0731-1435
     original_app_name: test-python-app
     location: westeurope
     app_repo_url: https://github.com/Azure-Samples/python-docs-hello-world.git
@@ -86,7 +86,8 @@
           reserved: true
           siteConfig:
             linuxFxVersion: PYTHON|{{ python_version }}
-            appCommandLine: '{{ startup_command }}'
+            appCommandLine: '{% if startup_command %}{{ startup_command }}{% endif
+              %}'
             appSettings:
             - name: WEBSITES_ENABLE_APP_SERVICE_STORAGE
               value: 'false'
@@ -119,7 +120,7 @@
         properties:
           numberOfWorkers: 1
           linuxFxVersion: PYTHON|{{ python_version }}
-          appCommandLine: '{{ startup_command }}'
+          appCommandLine: '{% if startup_command %}{{ startup_command }}{% endif %}'
           requestTracingEnabled: true
           httpLoggingEnabled: true
           logsDirectorySizeLimit: 35
@@ -156,7 +157,7 @@
       - 'Runtime Stack: {{ webapp_config_check.json.properties.linuxFxVersion | default(''Not
         specified'') }}'
       - 'Startup Command: {{ webapp_config_check.json.properties.appCommandLine |
-        default(''Default gunicorn'') }}'
+        default(''Azure Oryx auto-detection'') }}'
       - 'Reserved (Linux): {{ webapp_config_check.json.properties.reserved | default(false)
         }}'
       - '64-bit Platform: {{ not webapp_config_check.json.properties.use32BitWorkerProcess
@@ -218,9 +219,8 @@
       - 'Runtime: Python {{ python_version }} on Linux'
       - 'Build System: Oryx (automatic pip install)'
       - 'Architecture: 32-bit (Free tier limitation)'
-      - '{% if startup_file is defined and startup_file != ''auto-detect'' %}Startup
-        Command: {{ startup_command }}{% else %}Startup Command: gunicorn app:app
-        (default){% endif %}'
+      - "{% if startup_command %}Startup Command: {{ startup_command }}{% else %}Startup\
+        \ Command: Azure Oryx auto-detection (recommand\xE9){% endif %}"
       - 'Container: Managed Linux container with Docker'
       - 'Security: FTPS disabled, TLS 1.2 minimum'
       - === PYTHON ADVANTAGES ===
