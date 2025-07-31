@@ -1,15 +1,15 @@
-- name: Deploy test-python-app-0731-1405 Python App to Azure Linux App Service
+- name: Deploy test-python-app-0731-1409 Python App to Azure Linux App Service
   hosts: localhost
   gather_facts: false
   vars:
     resource_group: rg-test-python
-    app_name: test-python-app-0731-1405
+    app_name: test-python-app-0731-1409
     original_app_name: test-python-app
     location: westeurope
     app_repo_url: https://github.com/Azure-Samples/python-docs-hello-world.git
     app_repo_branch: main
-    startup_file: application.py
-    startup_command: python application.py
+    startup_file: app.py
+    startup_command: python app.py
     python_version: '3.11'
   tasks:
   - name: Get Azure access token
