@@ -1,0 +1,243 @@
+- name: Deploy DIMANCHE-0-0803-1339 Python App to Azure Linux App Service
+  hosts: localhost
+  gather_facts: false
+  vars:
+    resource_group: DIMANCHE-grp-0
+    app_name: DIMANCHE-0-0803-1339
+    original_app_name: DIMANCHE-0
+    location: centralus
+    app_repo_url: https://github.com/Azure-Samples/python-docs-hello-world.git
+    app_repo_branch: master
+    startup_file: app.py
+    startup_command: gunicorn app:app
+    python_version: '3.11'
+  tasks:
+  - name: Get Azure access token
+    ansible.builtin.uri:
+      url: https://login.microsoftonline.com/{{ azure_tenant }}/oauth2/v2.0/token
+      method: POST
+      body_format: form-urlencoded
+      body:
+        grant_type: client_credentials
+        client_id: '{{ azure_client_id }}'
+        client_secret: '{{ azure_secret }}'
+        scope: https://management.azure.com/.default
+    register: auth_response
+  - name: Set access token fact
+    ansible.builtin.set_fact:
+      access_token: '{{ auth_response.json.access_token }}'
+  - name: Create or update Resource Group
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourcegroups/{{
+        resource_group }}?api-version=2021-04-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        location: '{{ location }}'
+        tags:
+          Environment: Production
+          CreatedBy: Ansible-Playbook
+          Platform: Linux
+          Language: Python
+      status_code:
+      - 200
+      - 201
+    register: rg_response
+  - name: Create Linux App Service Plan
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/serverfarms/{{ app_name }}-plan?api-version=2021-02-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        location: '{{ location }}'
+        kind: linux
+        properties:
+          name: '{{ app_name }}-plan'
+          reserved: true
+        sku:
+          name: F1
+          tier: Free
+      status_code:
+      - 200
+      - 201
+    register: asp_response
+  - name: Create Linux Python Web App
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/sites/{{ app_name }}?api-version=2021-02-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        location: '{{ location }}'
+        kind: app,linux
+        properties:
+          serverFarmId: /subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+            resource_group }}/providers/Microsoft.Web/serverfarms/{{ app_name }}-plan
+          reserved: true
+          siteConfig:
+            linuxFxVersion: PYTHON|{{ python_version }}
+            appCommandLine: '{{ startup_command }}'
+            appSettings:
+            - name: WEBSITES_ENABLE_APP_SERVICE_STORAGE
+              value: 'false'
+            - name: SCM_DO_BUILD_DURING_DEPLOYMENT
+              value: 'true'
+            - name: ENABLE_ORYX_BUILD
+              value: 'true'
+            - name: PYTHONPATH
+              value: /home/site/wwwroot
+            - name: DJANGO_SETTINGS_MODULE
+              value: settings
+            - name: PORT
+              value: '8000'
+            - name: GUNICORN_CMD_ARGS
+              value: --bind=0.0.0.0:8000 --timeout 600 --access-logfile '-' --error-logfile
+                '-'
+            alwaysOn: false
+            ftpsState: Disabled
+            minTlsVersion: '1.2'
+            http20Enabled: true
+      status_code:
+      - 200
+      - 201
+    register: webapp_response
+  - name: Configure advanced Python settings
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/sites/{{ app_name }}/config/web?api-version=2021-02-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        properties:
+          numberOfWorkers: 1
+          linuxFxVersion: PYTHON|{{ python_version }}
+          appCommandLine: '{{ startup_command }}'
+          requestTracingEnabled: true
+          httpLoggingEnabled: true
+          logsDirectorySizeLimit: 35
+          detailedErrorLoggingEnabled: true
+          scmType: GitHub
+          alwaysOn: false
+          http20Enabled: true
+          minTlsVersion: '1.2'
+          ftpsState: Disabled
+          localMySqlEnabled: false
+          managedPipelineMode: Integrated
+          remoteDebuggingEnabled: false
+          use32BitWorkerProcess: true
+      status_code:
+      - 200
+      - 201
+    register: webapp_config_response
+  - name: Verify Python configuration
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/sites/{{ app_name }}/config/web?api-version=2021-02-01
+      method: GET
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      status_code:
+      - 200
+    register: webapp_config_check
+  - name: Display Python configuration status
+    ansible.builtin.debug:
+      msg:
+      - === LINUX PYTHON WEB APP CONFIGURATION VERIFICATION ===
+      - 'Platform: Linux Container'
+      - 'Runtime Stack: {{ webapp_config_check.json.properties.linuxFxVersion | default(''Not
+        specified'') }}'
+      - "Startup Command: {{ webapp_config_check.json.properties.appCommandLine |\
+        \ default('Non sp\xE9cifi\xE9') }}"
+      - 'Reserved (Linux): {{ webapp_config_check.json.properties.reserved | default(false)
+        }}'
+      - '64-bit Platform: {{ not webapp_config_check.json.properties.use32BitWorkerProcess
+        | default(false) }}'
+      - "Status: \u2705 Linux Python App Service successfully configured"
+  - name: Remove existing deployment source
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/sites/{{ app_name }}/sourcecontrols/web?api-version=2021-02-01
+      method: DELETE
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      status_code:
+      - 200
+      - 204
+      - 404
+    register: remove_deployment_response
+    ignore_errors: true
+  - name: Wait for Web App to be ready
+    ansible.builtin.pause:
+      seconds: 30
+  - name: Configure deployment source (GitHub)
+    ansible.builtin.uri:
+      url: https://management.azure.com/subscriptions/{{ azure_subscription_id }}/resourceGroups/{{
+        resource_group }}/providers/Microsoft.Web/sites/{{ app_name }}/sourcecontrols/web?api-version=2021-02-01
+      method: PUT
+      headers:
+        Authorization: Bearer {{ access_token }}
+        Content-Type: application/json
+      body_format: json
+      body:
+        properties:
+          repoUrl: '{{ app_repo_url }}'
+          branch: '{{ app_repo_branch }}'
+          isManualIntegration: true
+          deploymentRollbackEnabled: false
+          isMercurial: false
+      status_code:
+      - 200
+      - 201
+      - 202
+      timeout: 60
+    register: deployment_response
+    retries: 3
+    delay: 10
+  - name: Display Python deployment information
+    ansible.builtin.debug:
+      msg:
+      - === LINUX PYTHON WEB APP DEPLOYMENT COMPLETED SUCCESSFULLY! ===
+      - 'App Name: {{ app_name }}'
+      - 'Resource Group: {{ resource_group }}'
+      - 'Location: {{ location }}'
+      - 'App URL: https://{{ app_name }}.azurewebsites.net'
+      - 'Repository: {{ app_repo_url }}'
+      - 'Branch: {{ app_repo_branch }}'
+      - '--- Python Configuration ---'
+      - 'Platform: Linux Container (Ubuntu)'
+      - 'Runtime: Python {{ python_version }} on Linux'
+      - 'Build System: Oryx (automatic pip install)'
+      - 'Architecture: 32-bit (Free tier limitation)'
+      - 'Startup Command: {{ startup_command }}'
+      - 'Container: Managed Linux container with Docker'
+      - 'Security: FTPS disabled, TLS 1.2 minimum'
+      - === PYTHON ADVANTAGES ===
+      - "\u2705 Support natif pour Flask, Django, FastAPI"
+      - "\u2705 Environnement Linux optimis\xE9 pour Python"
+      - "\u2705 Installation automatique des d\xE9pendances via requirements.txt"
+      - "\u2705 Support de Gunicorn pour les performances"
+      - "\u2705 Variables d'environnement Python pr\xE9configur\xE9es"
+      - === NEXT STEPS ===
+      - 1. Assurez-vous d'avoir un fichier requirements.txt dans votre repo
+      - '2. IMPORTANT: Votre app doit exposer un objet ''app'' (Flask/Django/FastAPI)'
+      - '3. Si vous avez app.run() dans votre code, placez-le dans ''if __name__ ==
+        ''__main__'':'
+      - "4. Gunicorn d\xE9marrera automatiquement et \xE9coutera sur le port 8000"
+      - '5. Consultez les logs: az webapp log tail --name {{ app_name }} --resource-group
+        {{ resource_group }}'
+      - '6. Testez l''application: https://{{ app_name }}.azurewebsites.net'
